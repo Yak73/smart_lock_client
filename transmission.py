@@ -9,10 +9,11 @@ SERVER_ADDRESS = "localhost"
 
 
 def registration(login="log", pwd="pwd"):
-    if lexicographic_check(login, pwd) == 0 and uniq_check(login, pwd) == 0:
+    if lexicographic_check(login, pwd) == 0:
         sock = socket.socket()
         sock.connect((SERVER_ADDRESS, APP_PORT))  # подключаемся по адресу - х.х.х.х
-        sock.send(check_log_pwd(login, pwd, "1").encode())
+        send_str = form_send_to_reg_or_aut(login, pwd, "1").encode()
+        sock.send(send_str)
         answer = sock.recv(SIZE_TRANSFER).decode()
         if answer[2] == "s":
             keys = generate_key(login)
@@ -27,10 +28,11 @@ def registration(login="log", pwd="pwd"):
 
 
 def authorization(login="log", pwd="pwd"):
-    if lexicographic_check(login, pwd) == 0 and uniq_check(login, pwd) == 0:
+    if lexicographic_check(login, pwd) == 0:
         sock = socket.socket()
         sock.connect((SERVER_ADDRESS, APP_PORT))  # подключаемся по адресу - х.х.х.х
-        sock.send(check_log_pwd(login, pwd, "2").encode())
+        send_str = form_send_to_reg_or_aut(login, pwd, "2").encode()
+        sock.send(send_str)
         answer = sock.recv(SIZE_TRANSFER).decode()
         if answer[2] != "f":
             print_available_locks(answer[3:])
@@ -40,11 +42,12 @@ def authorization(login="log", pwd="pwd"):
     return -1
 
 
-def add_lock(login="log", id_lock="0", pwd_lock="pwd"):
-    if lexicographic_check(login, pwd_lock) == 0 and int(id_lock) >= 0:
+def add_lock(login="log", name_lock=None, code_lock=123, pwd_lock="pwd"):
+    if lexicographic_check(login) == 0 and name_lock and code_lock >= 0:
         sock = socket.socket()
         sock.connect((SERVER_ADDRESS, APP_PORT))  # подключаемся по адресу - х.х.х.х
-        sock.send(check_this_lock(login, id_lock, pwd_lock, "3").encode())
+        send_str = form_send_to_add_lock(login, name_lock, code_lock, pwd_lock, "3").encode()
+        sock.send(send_str)
         answer = sock.recv(SIZE_TRANSFER).decode()
         if answer[2] != "f":
             print_available_locks(answer[3:])
@@ -54,14 +57,15 @@ def add_lock(login="log", id_lock="0", pwd_lock="pwd"):
     return -1
 
 
-def open_lock(login="log", id_lock="0"):
-    if lexicographic_check(login) == 0 and int(id_lock) >= 0:
+def open_lock(login="log", pwd="some_pwd", name_lock="some_name_lock"):
+    if lexicographic_check(login, pwd) == 0 and name_lock:
         sock = socket.socket()
         sock.connect((SERVER_ADDRESS, APP_PORT))  # подключаемся по адресу - х.х.х.х
-        sock.send(check_access_to_lock(login, id_lock, "4").encode())
+        send_str = form_send_to_open_lock(login, pwd, name_lock, "4").encode()
+        sock.send(send_str)
         answer = sock.recv(SIZE_TRANSFER).decode()
         if answer[2] != "f":
-            sign = code_challenge(login, answer[3:], id_lock)
+            sign = form_send_to_sign_challenge(login, answer[3:], name_lock)  # TODO change [3:]
             sock.send(sign.encode())
             answer = sock.recv(SIZE_TRANSFER).decode()
             if answer[2] == "s":
@@ -85,7 +89,7 @@ def filling(function_to_decorate):
 
 
 @filling
-def check_log_pwd(login, pwd, oper):
+def form_send_to_reg_or_aut(login, pwd, oper):
     if login and pwd:
         send = oper + "1" + login + "$" + pwd
     else:
@@ -98,14 +102,14 @@ def generate_key(login):
     public_key, private_key = rsa.newkeys(512)
     # write private_key in file
     # TODO (WITH FILES IN ANDROID)
-    send = "12" + login + "$PUB$" + str(public_key.n) + "," + str(public_key.e)
+    send = "12" + login + "$" + str(public_key.n) + "$" + str(public_key.e)
     return send
 
 
 @filling
-def check_this_lock(login, id_lock, pwd_lock, oper):
-    if login and id_lock and pwd_lock:
-        send = oper + "1" + login + "$" + id_lock + "$" + pwd_lock
+def form_send_to_add_lock(login, name_lock, code_lock, pwd_lock, oper):
+    if login and name_lock and code_lock and pwd_lock:
+        send = oper + "1" + login + "$" + code_lock + "$" + pwd_lock + "$" + name_lock
     else:
         send = oper + "0"
     print("send: ", send)
@@ -113,41 +117,38 @@ def check_this_lock(login, id_lock, pwd_lock, oper):
 
 
 @filling
-def check_access_to_lock(login, id_lock, oper):
-    if login and id_lock:
-        send = oper + "1" + login + "$" + id_lock
+def form_send_to_open_lock(login, pwd, name_lock, oper):
+    if login and pwd and name_lock:
+        send = oper + "1" + login + "$" + pwd + "$" + name_lock
     else:
         send = oper + "0"
     print("send: ", send)
     return send
 
 
-def code_challenge(login, challenge, id_lock):
+def form_send_to_sign_challenge(login, challenge, name_lock):
     private_key = "12345"  # TODO  (with file)
-    if private_key and login and id_lock:
+    if private_key and login and name_lock:
         #signature = rsa.sign(challenge.encode(), private_key, 'SHA-1')
         signature = "sign_true"  # 4 DEBUG
-        send = "32" + login + "$" + signature + "$" + id_lock
+        send = "42" + login + "$" + signature + "$" + name_lock
     else:
-        send = "30"
+        send = "40"
     return send
 
 
-def lexicographic_check(login, pwd="correct"):
+def lexicographic_check(login, pwd=None):
     if not (5 <= len(login) <= 16):
         return "wrong length login"
-    if not (6 <= len(pwd) <= 16):
+    if not (6 <= len(pwd) <= 16) and pwd:
         return "wrong length pwd"
-    if not len(findall(r"[a-zA-Z_0-9]", pwd)) == len(pwd):
+    if not len(findall(r"[a-zA-Z_0-9]", pwd)) == len(pwd) and pwd:
         return "pwd must contain only letters and digits and _"
     if not len(findall(r"[a-zA-Z_0-9]", login)) == len(login):
         return "login must contain only letters and digits and _"
     return 0
 
 
-def uniq_check(login, pwd):
-    return 0
-    # TODO (WITH DB)
 
 
 def print_available_locks(list_av_locks):
